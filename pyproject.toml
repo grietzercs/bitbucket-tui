@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bitbucket-tui"
+version = "0.1.0"
+description = "Keyboard-driven terminal UI for Bitbucket Server / Data Center (browse, PRs, diffs, merge, clone)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "textual>=0.80",
+    "httpx>=0.27",
+    "rich>=13",
+    "keyring>=24",
+    "certifi",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+
+[project.scripts]
+bbtui = "bbtui.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["bbtui*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
