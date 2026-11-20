@@ -5,11 +5,9 @@ browse projects and repositories (including a global repo search and favorites),
 contents; list, inspect, diff, approve, comment on, decline and **merge** pull requests; and
 **clone** over HTTPS or SSH.
 
-It was built because Sourcetree's Remote tab spun forever against an enterprise Bitbucket
-instance even though the REST API and token were fine. The design rule is therefore
-**nothing may spin forever**. Every network call has timeouts and a bounded number of
-retries, and shows elapsed time. Esc cancels it, and failures show a clear error with
-`r` to retry.
+It was built because the Bitbucket web UI's performance is unreliable, fails to effectively display some PRs, victim to improper enterprise configurations and more. This TUI serves as a very minimal interface between you and the actions you want to take in bitbucket.
+
+**DISCLAIMER: This repository, and most of it's commits, is heavily assisted by LLMs. However it is utilized daily by me for work use such as: cloning repos, viewing PRs, commenting on or approving/merging PRs.**
 
 ## Stack
 
