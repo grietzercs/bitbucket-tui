@@ -12,7 +12,7 @@ import os
 import re
 import sys
 from dataclasses import asdict, dataclass, fields
-from typing import Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 log = logging.getLogger("bbtui.config")
 
@@ -82,17 +82,53 @@ def load_saved(settings: Optional[Settings] = None) -> Settings:
     return s
 
 
-def save(settings: Settings) -> str:
-    """Persist non-secret settings (0600). Returns the path written."""
-    path = config_path()
+def _write_json(path: str, data: Any) -> None:
+    """Atomically write ``data`` as JSON with mode 0600."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    data = {k: v for k, v in asdict(settings).items() if k in Settings.PERSISTED}
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
     os.replace(tmp, path)
+
+
+def save(settings: Settings) -> str:
+    """Persist non-secret settings (0600). Returns the path written."""
+    path = config_path()
+    _write_json(path, {k: v for k, v in asdict(settings).items() if k in Settings.PERSISTED})
     return path
+
+
+def favorites_path() -> str:
+    return os.path.join(config_dir(), "favorites.json")
+
+
+def _read_favorites() -> Dict[str, List[str]]:
+    """Favorite repositories ("PROJECT/slug") keyed by server base URL."""
+    path = favorites_path()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        log.warning("Ignoring unreadable favorites %s: %s", path, exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_favorites(base_url: str) -> List[str]:
+    return list(_read_favorites().get(base_url, []))
+
+
+def toggle_favorite(base_url: str, full_name: str) -> bool:
+    """Add or remove ``full_name`` for this server. Returns True if it is now a favorite."""
+    data = _read_favorites()
+    names = data.get(base_url, [])
+    added = full_name not in names
+    data[base_url] = names + [full_name] if added else [n for n in names if n != full_name]
+    _write_json(favorites_path(), data)
+    return added
 
 
 def forget() -> None:

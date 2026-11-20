@@ -108,3 +108,12 @@ def test_tls_options_build(tmp_path):
     assert isinstance(ctx, ssl.SSLContext) and ctx.verify_mode == ssl.CERT_REQUIRED
     with pytest.raises(FileNotFoundError):
         build_verify(TLSOptions(ca_bundle=str(tmp_path / "missing.pem")))
+
+
+def test_favorites_are_per_server():
+    assert config.toggle_favorite("https://a", "PRJ/one") is True
+    assert config.toggle_favorite("https://b", "PRJ/two") is True
+    assert config.load_favorites("https://a") == ["PRJ/one"]
+    assert config.toggle_favorite("https://a", "PRJ/one") is False
+    assert config.load_favorites("https://a") == []
+    assert config.load_favorites("https://b") == ["PRJ/two"]

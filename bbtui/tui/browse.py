@@ -13,6 +13,7 @@ from textual.binding import Binding
 from textual.containers import ScrollableContainer, Vertical
 from textual.widgets import Footer, Header, Select, Static, TabbedContent, TabPane
 
+from .. import config
 from ..api import PR_STATES
 from ..api.models import Branch, BrowseEntry, Page, Project, PullRequest, Repository, format_ts
 from .common import BaseScreen, PagedTable, error_text, guarded, human_size, ui_timeout
@@ -56,9 +57,9 @@ class ProjectsScreen(_Session):
         self.title = "Projects"
         self.sub_title = self.bapp.session_label()
         lines = [f"Connected to {info.base_url}  ·  Bitbucket {info.version or '?'}  ·  user: {info.username or '?'}"]
-        lines.append("Enter: open project   /: search all repositories   ~: my personal repositories   F1: help")
+        lines.append("Enter: open project   /: search all repositories and favorites   ~: my personal repositories   F1: help")
         for w in info.warnings:
-            lines.append(f"⚠ {w}")
+            lines.append(f"Warning: {w}")
         self.query_one("#info", Static).update(Text("\n".join(lines)))
         self.query_one(PagedTable).focus_table()
 
@@ -84,7 +85,12 @@ class ProjectsScreen(_Session):
 
 # --------------------------------------------------------------------- repos
 class ReposScreen(_Session):
-    """Repos of one project, or global repository search when ``project`` is None."""
+    """Repos of one project, or global repository search plus favorites when ``project`` is None."""
+
+    BINDINGS = [
+        Binding("asterisk", "toggle_favorite", "Favorite"),
+        Binding("ctrl+t", "switch_tab", "All/Favorites"),
+    ]
 
     def __init__(self, project: Optional[Project]) -> None:
         super().__init__()
@@ -93,23 +99,38 @@ class ReposScreen(_Session):
     def compose(self) -> ComposeResult:
         yield Header()
         if self.project is None:
-            placeholder = "Search all repositories by name (server-side, /rest/api/1.0/repos?name=)…"
             cols = ["Project", "Slug", "Name", "State"]
+            with TabbedContent(initial="all"):
+                with TabPane("All", id="all"):
+                    yield PagedTable(cols, self._fetch, self._row, limit=50,
+                                     filter_placeholder="Search all repositories by name (server-side, /rest/api/1.0/repos?name=)…",
+                                     empty_text="No repositories found.", id="all-table")
+                with TabPane("Favorites", id="favorites"):
+                    yield PagedTable(cols, self._fetch_favorites, self._row, limit=50, autoload=False,
+                                     empty_text="No favorites yet. Press * on a repository to add it.",
+                                     id="favorites-table")
         else:
-            placeholder = f"Filter repositories in {self.project.key} by name…"
-            cols = ["Slug", "Name", "State", "Description"]
-        yield PagedTable(cols, self._fetch, self._row, limit=50, filter_placeholder=placeholder,
-                         empty_text="No repositories found.")
+            yield PagedTable(["Slug", "Name", "State", "Description"], self._fetch, self._row, limit=50,
+                             filter_placeholder=f"Filter repositories in {self.project.key} by name…",
+                             empty_text="No repositories found.")
         yield Footer()
 
     def on_mount(self) -> None:
         self.title = "Repositories" if self.project is None else f"{self.project.key}: {self.project.name}"
         self.sub_title = self.bapp.session_label()
-        pt = self.query_one(PagedTable)
+        pt = self._table()
         if self.project is None:
             pt.query_one(".filter").focus()
         else:
             pt.focus_table()
+
+    def check_action(self, action: str, parameters: tuple) -> Optional[bool]:
+        return self.project is None or action != "switch_tab"
+
+    def _table(self) -> PagedTable:
+        if self.project is None:
+            return self.query_one(f"#{self.query_one(TabbedContent).active}-table", PagedTable)
+        return self.query_one(PagedTable)
 
     def _row(self, r: Repository):
         state = "archived" if r.archived else r.state.lower()
@@ -132,9 +153,49 @@ class ReposScreen(_Session):
         page.values = [r for r in page.values if r.project.key.lower() == key]
         return page
 
+    async def _fetch_favorites(self, start: int, limit: int, flt: str) -> Page[Repository]:
+        names = config.load_favorites(self.bapp.server.base_url)
+        batch = [n.split("/", 1) for n in names[start:start + limit]]
+        found = await asyncio.gather(*(self.client.get_repo(key, slug) for key, slug in batch),
+                                     return_exceptions=True)
+        # A repository that can no longer be read stays listed so it can still be unfavorited.
+        values = [
+            r if isinstance(r, Repository)
+            else Repository(slug=slug, name=slug, project=Project(key=key, name=key), state="UNAVAILABLE")
+            for (key, slug), r in zip(batch, found)
+        ]
+        last = start + limit >= len(names)
+        return Page(values=values, start=start, limit=limit, size=len(values), is_last_page=last,
+                    next_page_start=None if last else start + limit)
+
     @on(PagedTable.Selected)
     def _open(self, ev: PagedTable.Selected) -> None:
         self.app.push_screen(RepoScreen(ev.item))
+
+    @on(TabbedContent.TabActivated)
+    def _tab_activated(self, ev: TabbedContent.TabActivated) -> None:
+        pt = self._table()
+        if pt.id == "favorites-table":
+            pt.reload()
+            pt.focus_table()
+        else:
+            pt.query_one(".filter").focus()
+
+    def action_switch_tab(self) -> None:
+        tc = self.query_one(TabbedContent)
+        tc.active = "favorites" if tc.active == "all" else "all"
+
+    def action_toggle_favorite(self) -> None:
+        pt = self._table()
+        repo = pt.current_item()
+        if repo is None:
+            return
+        if config.toggle_favorite(self.bapp.server.base_url, repo.full_name):
+            self.notify(f"Added {repo.full_name} to favorites.")
+        else:
+            self.notify(f"Removed {repo.full_name} from favorites.")
+        if pt.id == "favorites-table":
+            pt.reload()
 
 
 # ---------------------------------------------------------------- repository
@@ -170,7 +231,7 @@ class RepoScreen(_Session):
                                  empty_text="Empty directory.", id="files-table")
             with TabPane("Branches", id="branches"):
                 yield PagedTable(["Branch", "Default", "Latest commit"], self._fetch_branches,
-                                 lambda b: (b.display_id, "✓" if b.is_default else "", b.latest_commit[:12]),
+                                 lambda b: (b.display_id, "yes" if b.is_default else "", b.latest_commit[:12]),
                                  limit=50, filter_placeholder="Filter branches (server-side)…", autoload=False,
                                  id="branches-table")
             with TabPane("Pull requests", id="prs"):
@@ -204,7 +265,7 @@ class RepoScreen(_Session):
 
     @staticmethod
     def _file_row(e: BrowseEntry):
-        icon = {"DIRECTORY": "📁", "PARENT": "⬆", "SUBMODULE": "🔗"}.get(e.type, "📄")
+        icon = {"DIRECTORY": "dir", "PARENT": "up", "SUBMODULE": "sub"}.get(e.type, "")
         name = e.name + ("/" if e.type == "DIRECTORY" else "")
         return (icon, name, human_size(e.size) if e.type == "FILE" else "")
 

@@ -414,3 +414,26 @@ async def test_clone_screen_end_to_end_over_http(tmp_path, git_http_server):
         cfg = (dest / ".git" / "config").read_text()
         assert CLONE_TOKEN not in cfg and "extraheader" not in cfg.lower()
         assert f"Bearer {CLONE_TOKEN}" in handler.seen_auth
+
+
+async def test_favorites_tab(fake):
+    app = make_app(fake)
+    async with app.run_test(size=SIZE) as pilot:
+        await login(app, pilot)
+        await pilot.press("slash")
+        await wait_for(pilot, lambda: isinstance(app.screen, ReposScreen))
+        everything = app.screen.query_one("#all-table", PagedTable)
+        await wait_for(pilot, lambda: everything.table.row_count > 0, msg="repos loaded")
+        everything.focus_table()
+        repo = everything.current_item()
+        await pilot.press("asterisk")
+        await pilot.press("ctrl+t")
+        favs = app.screen.query_one("#favorites-table", PagedTable)
+        await wait_for(pilot, lambda: favs.table.row_count == 1, msg="favorite listed")
+        assert favs.current_item().full_name == repo.full_name
+        await pilot.press("enter")
+        await wait_for(pilot, lambda: isinstance(app.screen, RepoScreen), msg="favorite opened")
+        await pilot.press("escape")
+        await wait_for(pilot, lambda: isinstance(app.screen, ReposScreen))
+        await pilot.press("asterisk")
+        await wait_for(pilot, lambda: favs.table.row_count == 0 and not favs.loading, msg="favorite removed")

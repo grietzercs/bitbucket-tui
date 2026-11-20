@@ -1,7 +1,7 @@
 # bitbucket-tui (`bbtui`)
 
 A keyboard-driven terminal UI for **Bitbucket Server / Data Center** (REST API 1.0). You can:
-browse projects and repositories (including a global repo search), branches, files and file
+browse projects and repositories (including a global repo search and favorites), branches, files and file
 contents; list, inspect, diff, approve, comment on, decline and **merge** pull requests; and
 **clone** over HTTPS or SSH.
 
@@ -22,7 +22,7 @@ Node and Homebrew packages are not needed. Textual includes a headless test driv
 ## Install and run
 
 ```sh
-cd ~/dev/bitbucket-tui
+cd bitbucket-tui
 make run          # creates .venv on first run, installs, launches (passes ./.env if present)
 make demo         # offline demo against a built-in fake Bitbucket server
 make test         # run the test suite
@@ -39,7 +39,7 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
 ### Pointing it at a server
 
-Type the base URL into the login screen, for example `https://coderepo.mobilehealth.va.gov`
+Type the base URL into the login screen, for example `https://bitbucket.example.com`
 or any other Bitbucket Server URL. A trailing slash or a pasted `/rest/api/1.0/...` suffix
 is stripped, and only `http(s)://` is accepted. You can also preset it:
 
@@ -90,7 +90,7 @@ Keychain items can be removed in Keychain Access by searching for `bitbucket-tui
 - Verification is **on** by default. Python uses the `certifi` CA bundle.
 - **Also trust macOS Keychain CAs** is on by default on macOS. It exports the CA
   certificates from the System and login keychains (read-only `security find-certificate`)
-  and adds them to the trust store. This mirrors curl/Safari behaviour for
+  and adds them to the trust store. This mirrors curl/Safari behavior for
   internally-issued certificates. Disable it with `--no-keychain-cas` or the TLS options
   panel.
 - **Custom CA bundle**: `--ca-bundle ~/certs/corp.pem`, `BITBUCKET_CA_BUNDLE`, or the TLS
@@ -105,7 +105,8 @@ Keychain items can be removed in Keychain Access by searching for `bitbucket-tui
 | Global | **Ctrl+Q** quit · **F1** / **?** help · **Esc** cancel the running request, else go back · Tab/Shift+Tab move focus · Enter open/select |
 | Login | **Ctrl+S** connect · **Ctrl+E** load from environment · Esc cancel a connection attempt |
 | Any list | ↑/↓/PgUp/PgDn (the next page loads automatically near the end) · **m** load next page · **r** reload/retry · type in the filter box (server-side; Enter applies immediately) |
-| Projects | **/** global repository search · **~** my personal repositories |
+| Projects | **/** global repository search and favorites · **~** my personal repositories |
+| Repositories | **\*** add/remove the highlighted repository as a favorite · **Ctrl+T** switch between the All and Favorites tabs (global search only) |
 | Repository | **f** files · **b** branches · **p** pull requests · **c** clone · **Backspace** up one directory · **s** cycle PR state (OPEN → MERGED → DECLINED → ALL) |
 | File view | **m** load more lines |
 | Pull request | **d** diff · **M** merge · **a** approve · **w** needs work · **X** decline · **n** comment · **c** clone source branch · **R** refresh · **m** more activity |
@@ -118,7 +119,12 @@ Keychain items can be removed in Keychain Access by searching for `bitbucket-tui
 - **Repositories** in a project are paged. Filtering uses `/rest/api/1.0/repos?name=&projectname=`
   and is then narrowed to the project key. **Global repository search** uses
   `/rest/api/1.0/repos?name=`. **Personal repos** are at `~user`.
-- **Paging** honours `isLastPage`/`nextPageStart`. Pages load one at a time and only on
+- **Favorites**: `*` on any repository list marks it. The global repository view has a
+  Favorites tab that re-fetches each favorite on open. A favorite that can no longer be read
+  is listed as `unavailable` so it can still be removed. Favorites are kept per server in
+  `~/.config/bitbucket-tui/favorites.json` (mode 0600), separate from remembered settings, so
+  `--forget` leaves them in place.
+- **Paging** honors `isLastPage`/`nextPageStart`. Pages load one at a time and only on
   demand: when the cursor or scroll nears the end, or when you press `m`. Thousands of
   repos are never fetched up front.
 - **Branches** support a server-side `filterText`. Selecting a branch switches the file
@@ -133,7 +139,7 @@ Keychain items can be removed in Keychain Access by searching for `bitbucket-tui
   - **Activity** shows comments with replies, approvals and other events, and is paged.
 - **Diff**: the changed-file list comes from `/changes` and is paged. Per-file diffs come
   from `/diff/{path}`, are loaded only for the highlighted file, and are rendered with +/-
-  colouring, hunk headers and old/new line numbers. Binary, truncated and very large diffs
+  coloring, hunk headers and old/new line numbers. Binary, truncated and very large diffs
   are labelled (display is capped at 5000 lines per file).
 - **Merge** (`M`): a confirmation dialog re-fetches the PR, merge check and the repo's merge
   strategies (`/settings/pull-requests`), with the default strategy preselected.
@@ -199,7 +205,7 @@ The tests run entirely offline against `bbtui/testing/fake_server.py`, an in-mem
 of the Bitbucket REST endpoints used here (an `httpx.MockTransport`), plus `respx`. They
 cover:
 
-- URL normalisation, auth header construction and error mapping (401/403/404/409/429/5xx,
+- URL normalization, auth header construction and error mapping (401/403/404/409/429/5xx,
   timeouts, TLS, redirects, HTML)
 - GET-only bounded retries, paging (including defensive cases), filters, browse, path
   encoding, PR endpoints, merge version and veto handling, approve/decline/comment
@@ -213,28 +219,34 @@ cover:
   and UI-timeout surfacing, clone refusal and SSH hint, and an end-to-end clone from the
   TUI
 
-## Known limitations
+## File structure
 
-- Not yet exercised against a real Bitbucket instance. Response shapes follow the REST 1.0
-  docs, but version differences are possible. Use `--debug-log` if something looks off.
-- Filtering repositories inside a project uses `/repos?name=&projectname=` (a fuzzy
-  project-name match), then narrows to the project key on the client. A page can show fewer
-  rows than the page size, and you load more as usual.
-- Personal repositories (`~`) need the server to report your username (`X-AUSERNAME`).
-- Merge strategies are shown only if your account can read the repo's pull-request
-  settings. Otherwise the server's default strategy is used.
-- Approve and needs-work use `PUT …/participants/{userSlug}` and fall back to the legacy
-  `POST …/approve` on 404.
-- Not implemented:
-  - PR creation, inline/line comments, tasks, editing or deleting comments
-  - commit history browsing
-  - side-by-side diffs
-  - fork-aware cloning beyond using the PR source repo's links
-- Display caps: about 5000 diff lines per file and 50,000 lines per file view. Long lines
-  scroll horizontally rather than wrap.
-- "Trust macOS Keychain CAs" imports every certificate in the System/login keychains as a
-  trust anchor. It does not evaluate per-certificate trust overrides you set in Keychain
-  Access.
-- HTTPS clone needs git ≥ 2.31 (Apple Git 2.50 is fine). SSH clone cannot prompt for key
-  passphrases or unknown host keys: load keys into ssh-agent
-  (`ssh-add --apple-use-keychain ~/.ssh/<key>`) and accept the host key once in a terminal.
+```
+bbtui/
+  api/        REST client, auth headers, error mapping, paging, TLS setup, response models
+  services/   Non-UI logic (git clone with token-free HTTPS and SSH preflight)
+  tui/        Textual app and screens (login, browse, pull request, diff rendering, clone)
+  testing/    In-memory fake Bitbucket server used by tests and `make demo`
+  config.py   Settings, .env parsing, saved config and favorites
+  keychain.py Opt-in macOS Keychain storage
+  redact.py   Secret scrubbing for logs, errors and git output
+  logsetup.py Opt-in debug log
+tests/        Offline test suite (unit, fake server, Textual Pilot)
+```
+
+## Contributing
+
+| Adding | Goes in |
+|---|---|
+| A Bitbucket REST call or response model | `bbtui/api/` |
+| Logic with no UI (git, filesystem) | `bbtui/services/` |
+| A screen or widget | `bbtui/tui/` |
+| A new endpoint on the fake server | `bbtui/testing/fake_server.py` |
+| A test | `tests/test_<area>.py` |
+
+Rules:
+
+- `api/` and `services/` never import from `tui/`.
+- Every network call needs a timeout; only GETs are retried.
+- Anything user-typed that is secret must pass through `redact.py` before it is logged or shown.
+- Tests run offline; do not add tests that need a real server.

@@ -444,6 +444,7 @@ HELP_TEXT = """\
   type in the filter box: server-side filter (Enter to apply immediately)
 
 [b]Projects[/b]   /  global repository search   ~  my personal repositories
+[b]Repositories[/b] *  add / remove favorite   Ctrl+T  switch All / Favorites (global search)
 [b]Repository[/b] f files   b branches   p pull requests   c clone   Backspace  up a directory
               s  cycle PR state filter (OPEN → MERGED → DECLINED → ALL)
 [b]File view[/b]  m  load more lines
